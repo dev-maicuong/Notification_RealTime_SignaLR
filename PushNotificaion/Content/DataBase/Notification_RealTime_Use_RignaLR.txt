@@ -1,0 +1,260 @@
+https://www.youtube.com/watch?v=AF9toV3EfnI&t=829s
+http://www.dotnetawesome.com/2016/05/push-notification-system-with-signalr.html
+
+tạo data
+ thêm dòng Alter Database MyPushNotification set Enable_Broker
+
+tạo lớp OWIN
+public class Startup
+    {
+        public void Configuration(IAppBuilder app)
+        {
+
+            app.MapSignalR();
+        }
+
+    }
+
+
+
+Tạo lớp SignalR
+
+public void Hello()
+        {
+            Clients.All.hello();
+        }
+
+
+
+<add name="sqlConString" connectionString="data source=DESKTOP-48K6POR\SQLEXPRESS;initial catalog=MyPushNotification;integrated security=True;"/>
+
+
+
+public class NotificationComponent
+    {
+        public void RegisterNotification(DateTime currentTime)
+        {
+            //Here we will add a function for register notification (will add sql dependency)
+            string conStr = ConfigurationManager.ConnectionStrings["sqlConString"].ConnectionString;
+            string sqlCommand = @"SELECT [ContactID],[ContactName],[ContactNo] from [dbo].[Contacts] where [AddedOn] > @AddedOn";
+            //you can notice here I have added table name like this [dbo].[Contacts] with [dbo], its mendatory when you use Sql Dependency
+            using (SqlConnection con = new SqlConnection(conStr))
+            {
+                SqlCommand cmd = new SqlCommand(sqlCommand, con);
+                cmd.Parameters.AddWithValue("@AddedOn", currentTime);
+                if (con.State != System.Data.ConnectionState.Open)
+                {
+                    con.Open();
+                }
+                cmd.Notification = null;
+                SqlDependency sqlDep = new SqlDependency(cmd);
+                sqlDep.OnChange += sqlDep_OnChange;
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    // nothing need to add here now
+                }
+            }
+        }
+        void sqlDep_OnChange(object sender, SqlNotificationEventArgs e)
+        {
+            if (e.Type == SqlNotificationType.Change)
+            {
+                SqlDependency sqlDep = sender as SqlDependency;
+                sqlDep.OnChange -= sqlDep_OnChange;
+                var notificationHub = GlobalHost.ConnectionManager.GetHubContext<NotificationHub>();
+                notificationHub.Clients.All.notify("added");
+                //re-register notification
+                RegisterNotification(DateTime.Now);
+
+            }
+        }
+        public List<Contact> GetContacts(DateTime afterDate)
+        {
+            using (MyPushNotificationEntities dc = new MyPushNotificationEntities())
+            {
+                return dc.Contacts.Where(a => a.AddedOn > afterDate).OrderByDescending(a => a.AddedOn).ToList();
+            }
+        }
+    }
+
+
+
+chuông:
+<span class="noti glyphicon glyphicon-bell"><span class="count">&nbsp;</span></span>
+                    <div class="noti-content">
+                        <div class="noti-top-arrow"></div>
+                        <ul id="notiContent"></ul>
+                    </div>
+                
+
+
+
+
+<script src="~/Scripts/jquery-3.4.1.min.js"></script>
+    <script src="~/Scripts/jquery.signalR-2.4.1.min.js"></script>
+    <script src="~/signalr/hubs "></script>
+    <script src="~/Scripts/bootstrap.min.js"></script>
+
+
+    <link href="~/Content/bootstrap-theme.min.css" rel="stylesheet" />
+
+    <style type="text/css">
+        /*Added css for design notification area, you can design by your self*/
+        /* COPY css content from youtube video description*/
+        .noti-content {
+            position: fixed;
+            right: 100px;
+            background: #e5e5e5;
+            border-radius: 4px;
+            top: 47px;
+            width: 250px;
+            display: none;
+            border: 1px solid #9E988B;
+        }
+
+        ul#notiContent {
+            max-height: 200px;
+            overflow: auto;
+            padding: 0px;
+            margin: 0px;
+            padding-left: 20px;
+        }
+
+            ul#notiContent li {
+                margin: 3px;
+                padding: 6px;
+                background: #fff;
+            }
+
+        .noti-top-arrow {
+            border-color: transparent;
+            border-bottom-color: #F5DEB3;
+            border-style: dashed dashed solid;
+            border-width: 0 8.5px 8.5px;
+            position: absolute;
+            right: 32px;
+            top: -8px;
+        }
+
+        span.noti {
+            color: #FF2323;
+            margin: 15px;
+            position: fixed;
+            right: 100px;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        span.count {
+            position: relative;
+            top: -3px;
+        }
+    </style>
+    <script type="text/javascript">
+        $(function () {
+            // Click on notification icon for show notification
+            $('span.noti').click(function (e) {
+                e.stopPropagation();
+                $('.noti-content').show();
+                var count = 0;
+                count = parseInt($('span.count').html()) || 0;
+                //only load notification if not already loaded
+                if (count > 0) {
+                    updateNotification();
+                }
+                $('span.count', this).html('&nbsp;');
+            })
+            // hide notifications
+            $('html').click(function () {
+                $('.noti-content').hide();
+            })
+            // update notification
+            function updateNotification() {
+                $('#notiContent').empty();
+                $('#notiContent').append($('<li>Loading...</li>'));
+                $.ajax({
+                    type: 'GET',
+                    url: '/home/GetNotificationContacts',
+                    success: function (response) {
+                        $('#notiContent').empty();
+                        if (response.length == 0) {
+                            $('#notiContent').append($('<li>No data available</li>'));
+                        }
+                        $.each(response, function (index, value) {
+                            $('#notiContent').append($('<li>New contact : ' + value.ContactName + ' (' + value.ContactNo + ') added</li>'));
+                        });
+                    },
+                    error: function (error) {
+                        console.log(error);
+                    }
+                })
+            }
+            // update notification count
+            function updateNotificationCount() {
+                var count = 0;
+                count = parseInt($('span.count').html()) || 0;
+                count++;
+                $('span.count').html(count);
+            }
+            // signalr js code for start hub and send receive notification
+            var notificationHub = $.connection.notificationHub;
+            $.connection.hub.start().done(function () {
+                console.log('Notification hub started');
+            });
+            //signalr method for push server message to client
+            notificationHub.client.notify = function (message) {
+                if (message && message.toLowerCase() == "added") {
+                    updateNotificationCount();
+                }
+            }
+        })
+    </script>
+
+
+
+
+
+public class MvcApplication : System.Web.HttpApplication
+    {
+        
+        string con = ConfigurationManager.ConnectionStrings["sqlConString"].ConnectionString;
+        
+        
+        protected void Application_Start()
+        {
+            AreaRegistration.RegisterAllAreas();
+            FilterConfig.RegisterGlobalFilters(GlobalFilters.Filters);
+            RouteConfig.RegisterRoutes(RouteTable.Routes);
+            BundleConfig.RegisterBundles(BundleTable.Bundles);
+            
+            SqlDependency.Start(con);
+        }
+
+
+        protected void Session_Start(object sender, EventArgs e)
+        {
+            NotificationComponent NC = new NotificationComponent();
+            var currentTime = DateTime.Now;
+            HttpContext.Current.Session["LastUpdated"] = currentTime;
+            NC.RegisterNotification(currentTime);
+        }
+
+
+        protected void Application_End()
+        {
+            //here we will stop Sql Dependency
+            SqlDependency.Stop(con);
+        }
+    }
+
+
+
+public JsonResult GetNotificationContacts()
+        {
+            var notificationRegisterTime = Session["LastUpdated"] != null ? Convert.ToDateTime(Session["LastUpdated"]) : DateTime.Now;
+            NotificationComponent NC = new NotificationComponent();
+            var list = NC.GetContacts(notificationRegisterTime);
+            //update session here for get only new added contacts (notification)
+            Session["LastUpdate"] = DateTime.Now;
+            return new JsonResult { Data = list, JsonRequestBehavior = JsonRequestBehavior.AllowGet };
+        }
